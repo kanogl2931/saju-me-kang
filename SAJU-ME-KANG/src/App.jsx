@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import { signInWithGoogle, signOut } from './services/auth'
 import { requestSajuInterpretation } from './services/gemini'
 import { supabase } from './services/supabase'
 import { buildSajuPrompt } from './utils/buildSajuPrompt'
@@ -149,6 +150,10 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isViewingSaved, setIsViewingSaved] = useState(false)
   const [isEditingSaved, setIsEditingSaved] = useState(false)
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authError, setAuthError] = useState('')
+  const [isSigningIn, setIsSigningIn] = useState(false)
   const resultRef = useRef(null)
 
   const years = useMemo(() => {
@@ -211,8 +216,58 @@ function App() {
   }
 
   useEffect(() => {
-    loadReadings()
+    let isMounted = true
+
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      if (!isMounted) return
+      setSession(currentSession)
+      setAuthLoading(false)
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      setAuthLoading(false)
+    })
+
+    return () => {
+      isMounted = false
+      subscription.unsubscribe()
+    }
   }, [])
+
+  useEffect(() => {
+    if (!session) {
+      setReadings([])
+      return
+    }
+
+    loadReadings()
+  }, [session])
+
+  const handleGoogleSignIn = async () => {
+    setAuthError('')
+    setIsSigningIn(true)
+
+    try {
+      await signInWithGoogle()
+    } catch (signInError) {
+      setAuthError(signInError.message)
+      setIsSigningIn(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    setAuthError('')
+
+    try {
+      await signOut()
+      resetForm()
+    } catch (signOutError) {
+      setAuthError(signOutError.message)
+    }
+  }
 
   const handleDayChange = (value) => {
     const nextDay = Number(value)
@@ -336,6 +391,7 @@ function App() {
       setResult(cleanedResult)
 
       const readingPayload = {
+        user_id: session.user.id,
         name: name.trim(),
         birth_date: birthDate,
         birth_time: birthTime,
@@ -373,6 +429,46 @@ function App() {
       setIsLoading(false)
     }
   }
+
+  if (authLoading) {
+    return (
+      <div className="auth-screen">
+        <p className="auth-loading">로그인 상태를 확인하고 있습니다</p>
+      </div>
+    )
+  }
+
+  if (!session) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <p className="auth-eyebrow">사주 해석</p>
+          <h1 className="auth-title">로그인이 필요합니다</h1>
+          <p className="auth-description">
+            Google 계정으로 로그인하면 사주 결과를 저장하고 다시 볼 수 있습니다.
+          </p>
+          <button
+            type="button"
+            className="google-sign-in-btn"
+            onClick={handleGoogleSignIn}
+            disabled={isSigningIn}
+          >
+            <span className="google-sign-in-icon" aria-hidden="true">
+              G
+            </span>
+            {isSigningIn ? 'Google로 이동 중...' : 'Google로 로그인'}
+          </button>
+          {authError && <p className="error-message auth-error">{authError}</p>}
+        </div>
+      </div>
+    )
+  }
+
+  const userLabel =
+    session.user.user_metadata?.full_name ??
+    session.user.user_metadata?.name ??
+    session.user.email ??
+    '사용자'
 
   return (
     <div className="app-shell">
@@ -432,6 +528,13 @@ function App() {
       </aside>
 
       <div className="app">
+        <div className="user-bar">
+          <span className="user-label">{userLabel}</span>
+          <button type="button" className="sign-out-btn" onClick={handleSignOut}>
+            로그아웃
+          </button>
+        </div>
+
         <header className="app-header">
           <h1>사주 해석</h1>
           <p>
@@ -663,7 +766,7 @@ function App() {
           </button>
         </form>
 
-        {error && <p className="error-message">{error}</p>}
+        {(error || authError) && <p className="error-message">{error || authError}</p>}
 
         {isLoading && (
           <div className="loading-indicator" aria-live="polite">
