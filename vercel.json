@@ -1,0 +1,6 @@
+{
+  "installCommand": "npm install --prefix SAJU-ME-KANG",
+  "buildCommand": "npm run build --prefix SAJU-ME-KANG",
+  "outputDirectory": "SAJU-ME-KANG/dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
