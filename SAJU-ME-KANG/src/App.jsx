@@ -148,6 +148,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isViewingSaved, setIsViewingSaved] = useState(false)
+  const [isEditingSaved, setIsEditingSaved] = useState(false)
   const resultRef = useRef(null)
 
   const years = useMemo(() => {
@@ -225,6 +226,7 @@ function App() {
   const applyReading = (reading) => {
     setSelectedId(reading.id)
     setIsViewingSaved(true)
+    setIsEditingSaved(false)
     setName(reading.name ?? '')
 
     const [year = '', month = '', day = ''] = (reading.birth_date ?? '').split('-')
@@ -266,6 +268,13 @@ function App() {
     setError('')
     setSelectedId(null)
     setIsViewingSaved(false)
+    setIsEditingSaved(false)
+  }
+
+  const startEditSaved = () => {
+    setIsViewingSaved(false)
+    setIsEditingSaved(true)
+    setError('')
   }
 
   const handleDeleteReading = async (event, reading) => {
@@ -300,8 +309,9 @@ function App() {
     setError('')
     setResult('')
     setSajuChart(null)
-    setSelectedId(null)
+    const editingId = isEditingSaved && selectedId ? selectedId : null
     setIsViewingSaved(false)
+    setIsEditingSaved(false)
 
     try {
       const chart = calculateSaju({
@@ -325,22 +335,34 @@ function App() {
       const cleanedResult = removeTautologicalParentheses(interpretation)
       setResult(cleanedResult)
 
-      const { data: saved, error: saveError } = await supabase
-        .from('saju_readings')
-        .insert({
-          name: name.trim(),
-          birth_date: birthDate,
-          birth_time: birthTime,
-          gender,
-          calendar_type: calendarType,
-          saju_chart: chart.formatted,
-          result: cleanedResult,
-        })
-        .select('id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at')
-        .single()
+      const readingPayload = {
+        name: name.trim(),
+        birth_date: birthDate,
+        birth_time: birthTime,
+        gender,
+        calendar_type: calendarType,
+        saju_chart: chart.formatted,
+        result: cleanedResult,
+      }
+
+      const readingSelect =
+        'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at'
+
+      const { data: saved, error: saveError } = editingId
+        ? await supabase
+            .from('saju_readings')
+            .update(readingPayload)
+            .eq('id', editingId)
+            .select(readingSelect)
+            .single()
+        : await supabase.from('saju_readings').insert(readingPayload).select(readingSelect).single()
 
       if (saveError) {
-        throw new Error(`사주 결과 저장에 실패했습니다: ${saveError.message}`)
+        throw new Error(
+          editingId
+            ? `사주 결과 수정에 실패했습니다: ${saveError.message}`
+            : `사주 결과 저장에 실패했습니다: ${saveError.message}`,
+        )
       }
 
       setSelectedId(saved.id)
@@ -412,7 +434,11 @@ function App() {
       <div className="app">
         <header className="app-header">
           <h1>사주 해석</h1>
-          <p>생년월일과 태어난 시간을 선택해 주세요</p>
+          <p>
+            {isEditingSaved
+              ? '저장된 사주를 수정한 뒤 다시 해석해 주세요'
+              : '생년월일과 태어난 시간을 선택해 주세요'}
+          </p>
         </header>
 
         {isViewingSaved && (sajuChart || result) && (
@@ -470,13 +496,14 @@ function App() {
               </div>
             )}
 
-            <button
-              type="button"
-              className="clear-saved-btn"
-              onClick={resetForm}
-            >
-              새 사주 입력하기
-            </button>
+            <div className="saved-result-actions">
+              <button type="button" className="edit-saved-btn" onClick={startEditSaved}>
+                수정하기
+              </button>
+              <button type="button" className="clear-saved-btn" onClick={resetForm}>
+                새 사주 입력하기
+              </button>
+            </div>
           </section>
         )}
 
@@ -626,7 +653,13 @@ function App() {
           </div>
 
           <button type="submit" className="submit-btn" disabled={isLoading || !isFormComplete}>
-            {isLoading ? '해석 중...' : '사주 해석하기'}
+            {isLoading
+              ? isEditingSaved
+                ? '수정 중...'
+                : '해석 중...'
+              : isEditingSaved
+                ? '사주 수정하기'
+                : '사주 해석하기'}
           </button>
         </form>
 

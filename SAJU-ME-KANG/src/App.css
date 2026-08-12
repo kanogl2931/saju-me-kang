@@ -571,7 +571,7 @@
 
 .clear-saved-btn {
   width: 100%;
-  margin-top: 1.25rem;
+  margin-top: 0;
   padding: 0.75rem 1rem;
   font-size: 0.9rem;
   font-weight: 600;
@@ -581,6 +581,30 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
+}
+
+.saved-result-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.edit-saved-btn {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.edit-saved-btn:hover {
+  background: var(--color-primary-hover);
 }
 
 .clear-saved-btn:hover {
