@@ -1,20 +1,31 @@
 :root {
-  --color-bg: #f7f4ef;
-  --color-surface: #ffffff;
-  --color-primary: #4a3f6b;
-  --color-primary-hover: #3a3156;
-  --color-primary-light: #ede9f5;
-  --color-accent: #b8953a;
-  --color-text: #2a2a2a;
-  --color-text-muted: #6e6a63;
-  --color-border: #ddd8cf;
-  --color-border-focus: #4a3f6b;
+  /* saju-cat-2 palette */
+  --color-navy: #1f316f;
+  --color-navy-deep: #172656;
+  --color-celestial: #2d4b9b;
+  --color-parchment: #f0e6d2;
+  --color-astro-gold: #feeb9a;
+  --color-wood: #ac7c5b;
+  --color-mystic: #4b4b9a;
+
+  --color-bg: #f3eee4;
+  --color-surface: #fffdf8;
+  --color-primary: var(--color-navy);
+  --color-primary-hover: var(--color-navy-deep);
+  --color-primary-light: #e6ebf6;
+  --color-accent: #c9a84a;
+  --color-accent-soft: var(--color-astro-gold);
+  --color-text: #1a2438;
+  --color-text-muted: #5c6478;
+  --color-border: #d8d0c0;
+  --color-border-focus: var(--color-navy);
   --color-error: #c0392b;
   --color-error-bg: #fdf0ee;
   --radius-sm: 8px;
   --radius-md: 12px;
-  --shadow-sm: 0 1px 3px rgba(42, 42, 42, 0.06);
-  --shadow-md: 0 4px 16px rgba(42, 42, 42, 0.08);
+  --shadow-sm: 0 1px 3px rgba(31, 49, 111, 0.1);
+  --shadow-md: 0 4px 16px rgba(31, 49, 111, 0.12);
+  --focus-ring: 0 0 0 3px rgba(31, 49, 111, 0.14);
 }
 
 *,
@@ -28,7 +39,9 @@ body {
   min-height: 100vh;
   background-color: var(--color-bg);
   color: var(--color-text);
-  font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', system-ui, sans-serif;
+  font-family: "Hahmlet", serif;
+  font-optical-sizing: auto;
+  font-style: normal;
   -webkit-font-smoothing: antialiased;
 }
 

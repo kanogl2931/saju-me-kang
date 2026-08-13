@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import sajuCatLoading from './assets/saju-cat-1.png'
+import sajuCatResult from './assets/saju-cat-2.png'
+import ProfileModal from './components/ProfileModal'
 import { signInWithGoogle, signOut } from './services/auth'
 import { requestSajuInterpretation } from './services/gemini'
+import { fetchProfile, upsertProfile } from './services/profile'
 import { supabase } from './services/supabase'
 import { buildSajuPrompt } from './utils/buildSajuPrompt'
 import { calculateSaju } from './utils/calculateSaju'
@@ -62,6 +66,8 @@ function stripMarkdownMarkers(text) {
     .trim()
 }
 
+const GUEST_DRAFT_KEY = 'saju-guest-draft'
+
 function parseResultBlocks(text) {
   if (!text) return []
 
@@ -93,6 +99,85 @@ function parseResultBlocks(text) {
     })
 }
 
+function blockTextLength(block) {
+  if (block.type === 'divider') return 0
+  return block.text?.length ?? 0
+}
+
+/** 로그인 전 미리보기: 전체 해석의 약 절반만 공개 */
+function splitBlocksForPreview(blocks, ratio = 0.5) {
+  if (!blocks.length) {
+    return { visible: [], locked: false }
+  }
+
+  const totalLength = blocks.reduce((sum, block) => sum + blockTextLength(block), 0)
+  if (totalLength === 0) {
+    return { visible: blocks, locked: false }
+  }
+
+  const targetLength = Math.max(1, Math.floor(totalLength * ratio))
+  let visibleCount = 0
+  let accumulated = 0
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    accumulated += blockTextLength(blocks[index])
+    visibleCount = index + 1
+    if (accumulated >= targetLength) break
+  }
+
+  // 마지막 블록까지 다 보여주면 잠글 내용이 없음 → 최소 1블록은 가림
+  if (visibleCount >= blocks.length && blocks.length > 1) {
+    visibleCount = Math.max(1, Math.floor(blocks.length * ratio))
+  }
+
+  if (visibleCount >= blocks.length) {
+    const [first] = blocks
+    if (first?.type === 'paragraph' && first.text.length > 80) {
+      const cut = Math.floor(first.text.length * ratio)
+      return {
+        visible: [{ ...first, text: `${first.text.slice(0, cut).trimEnd()}…` }],
+        locked: true,
+      }
+    }
+    return { visible: blocks, locked: false }
+  }
+
+  return {
+    visible: blocks.slice(0, visibleCount),
+    locked: restHasContent(blocks, visibleCount),
+  }
+}
+
+function restHasContent(blocks, fromIndex) {
+  return blocks.slice(fromIndex).some((block) => block.type !== 'divider')
+}
+
+function saveGuestDraft(draft) {
+  try {
+    sessionStorage.setItem(GUEST_DRAFT_KEY, JSON.stringify(draft))
+  } catch {
+    // sessionStorage 사용 불가 시 무시
+  }
+}
+
+function loadGuestDraft() {
+  try {
+    const raw = sessionStorage.getItem(GUEST_DRAFT_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function clearGuestDraft() {
+  try {
+    sessionStorage.removeItem(GUEST_DRAFT_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 function ResultBody({ blocks }) {
   if (!blocks.length) return null
 
@@ -121,6 +206,56 @@ function ResultBody({ blocks }) {
   )
 }
 
+function CatSpeechPanel({
+  blocks,
+  personName,
+  locked = false,
+  onLogin,
+  isSigningIn = false,
+  authError = '',
+}) {
+  if (!blocks.length) return null
+
+  return (
+    <div className="cat-speech-panel">
+      <div className="cat-speech-figure">
+        <img src={sajuCatResult} alt="사주 해석을 알려주는 고양이" className="cat-speech-image" />
+      </div>
+      <div className="cat-result-content">
+        <p className="cat-speech-label">
+          {personName ? `${personName}님 사주를 살펴봤다냥!` : '사주를 살펴봤다냥!'}
+        </p>
+        <div className={locked ? 'interpretation-preview' : undefined}>
+          <ResultBody blocks={blocks} />
+          {locked && (
+            <div className="result-lock-gate">
+              <div className="result-lock-fade" aria-hidden="true" />
+              <div className="result-lock-card">
+                <p className="result-lock-title">나머지 해석은 로그인 후 확인할 수 있어요</p>
+                <p className="result-lock-desc">
+                  Google로 로그인하면 전체 사주 해석과 저장 기능을 이용할 수 있습니다.
+                </p>
+                <button
+                  type="button"
+                  className="google-sign-in-btn"
+                  onClick={onLogin}
+                  disabled={isSigningIn}
+                >
+                  <span className="google-sign-in-icon" aria-hidden="true">
+                    G
+                  </span>
+                  {isSigningIn ? 'Google로 이동 중...' : 'Google로 로그인하고 전체 보기'}
+                </button>
+                {authError && <p className="error-message auth-error">{authError}</p>}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function formatBirthLabel(birthDate, birthTime) {
   if (!birthDate) return ''
   const [year, month, day] = birthDate.split('-')
@@ -128,15 +263,36 @@ function formatBirthLabel(birthDate, birthTime) {
   return `${year}년 ${Number(month)}월 ${Number(day)}일 ${time}`
 }
 
+function formatReadingDate(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
+}
+
+function applyProfileFields(profile, setters) {
+  if (!profile) return
+
+  const [year = '', month = '', day = ''] = (profile.birth_date ?? '').split('-')
+  const [hour = '', minute = ''] = (profile.birth_time ?? '').slice(0, 5).split(':')
+
+  setters.setName(profile.name ?? '')
+  setters.setBirthYear(year)
+  setters.setBirthMonth(month ? String(Number(month)) : '')
+  setters.setBirthDay(day ? String(Number(day)) : '')
+  setters.setBirthHour(hour !== '' ? String(Number(hour)) : '')
+  setters.setBirthMinute(minute !== '' ? String(Number(minute)) : '')
+  setters.setGender(profile.gender ?? '')
+  setters.setCalendarType(profile.calendar_type ?? '')
+}
+
 function App() {
   const [name, setName] = useState('')
-
   const [birthYear, setBirthYear] = useState('')
   const [birthMonth, setBirthMonth] = useState('')
   const [birthDay, setBirthDay] = useState('')
   const [birthHour, setBirthHour] = useState('')
   const [birthMinute, setBirthMinute] = useState('')
-
   const [gender, setGender] = useState('')
   const [calendarType, setCalendarType] = useState('')
 
@@ -150,11 +306,30 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isViewingSaved, setIsViewingSaved] = useState(false)
   const [isEditingSaved, setIsEditingSaved] = useState(false)
+
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
   const [isSigningIn, setIsSigningIn] = useState(false)
+
+  const [profile, setProfile] = useState(null)
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [isProfileRequired, setIsProfileRequired] = useState(false)
+
   const resultRef = useRef(null)
+  const guestDraftHandledRef = useRef(false)
+
+  const fieldSetters = {
+    setName,
+    setBirthYear,
+    setBirthMonth,
+    setBirthDay,
+    setBirthHour,
+    setBirthMinute,
+    setGender,
+    setCalendarType,
+  }
 
   const years = useMemo(() => {
     const list = []
@@ -200,11 +375,60 @@ function App() {
   const pillars = useMemo(() => extractPillars(chartText), [chartText])
   const chartRows = useMemo(() => parseChartRows(chartText), [chartText])
   const resultBlocks = useMemo(() => parseResultBlocks(result), [result])
+  const isLoggedIn = Boolean(session)
+  const previewResult = useMemo(() => {
+    if (isLoggedIn) {
+      return { visible: resultBlocks, locked: false }
+    }
+    return splitBlocksForPreview(resultBlocks, 0.5)
+  }, [isLoggedIn, resultBlocks])
+
+  const googleDefaultName =
+    session?.user?.user_metadata?.full_name ??
+    session?.user?.user_metadata?.name ??
+    ''
+
+  const applyGuestDraft = (draft) => {
+    if (!draft) return
+
+    setName(draft.name ?? '')
+    setBirthYear(draft.birthYear ?? '')
+    setBirthMonth(draft.birthMonth ?? '')
+    setBirthDay(draft.birthDay ?? '')
+    setBirthHour(draft.birthHour ?? '')
+    setBirthMinute(draft.birthMinute ?? '')
+    setGender(draft.gender ?? '')
+    setCalendarType(draft.calendarType ?? '')
+    setSajuChart(draft.sajuChart ?? null)
+    setResult(draft.result ?? '')
+    setSelectedId(null)
+    setIsViewingSaved(false)
+    setIsEditingSaved(false)
+    setError('')
+  }
+
+  const persistGuestDraft = (overrides = {}) => {
+    saveGuestDraft({
+      name: name.trim(),
+      birthYear,
+      birthMonth,
+      birthDay,
+      birthHour,
+      birthMinute,
+      gender,
+      calendarType,
+      sajuChart,
+      result,
+      ...overrides,
+    })
+  }
 
   const loadReadings = async () => {
     const { data, error: loadError } = await supabase
       .from('saju_readings')
-      .select('id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at')
+      .select(
+        'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id',
+      )
       .order('created_at', { ascending: false })
 
     if (loadError) {
@@ -213,6 +437,32 @@ function App() {
     }
 
     setReadings(data ?? [])
+  }
+
+  const loadProfile = async (userId, { skipFormFill = false } = {}) => {
+    setProfileLoading(true)
+    setError('')
+
+    try {
+      const data = await fetchProfile(userId)
+      setProfile(data)
+
+      if (!data) {
+        setIsProfileRequired(true)
+        setShowProfileModal(true)
+        return
+      }
+
+      setIsProfileRequired(false)
+      setShowProfileModal(false)
+      if (!skipFormFill) {
+        applyProfileFields(data, fieldSetters)
+      }
+    } catch (profileError) {
+      setError(`프로필을 불러오지 못했습니다: ${profileError.message}`)
+    } finally {
+      setProfileLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -240,15 +490,122 @@ function App() {
   useEffect(() => {
     if (!session) {
       setReadings([])
+      setProfile(null)
+      setShowProfileModal(false)
+      setIsProfileRequired(false)
+      guestDraftHandledRef.current = false
       return
     }
 
-    loadReadings()
+    if (guestDraftHandledRef.current) {
+      return
+    }
+    guestDraftHandledRef.current = true
+
+    const draft = loadGuestDraft()
+    const hasDraftResult = Boolean(draft?.result || draft?.sajuChart)
+
+    if (hasDraftResult) {
+      applyGuestDraft(draft)
+    }
+
+    ;(async () => {
+      await loadProfile(session.user.id, { skipFormFill: hasDraftResult })
+      await loadReadings()
+
+      if (!hasDraftResult) return
+
+      const profileData = await fetchProfile(session.user.id)
+      if (!profileData) return
+
+      try {
+        const readingPayload = {
+          user_id: session.user.id,
+          name: (draft.name || profileData.name || '').trim(),
+          birth_date:
+            draft.birthYear && draft.birthMonth && draft.birthDay
+              ? `${draft.birthYear}-${String(draft.birthMonth).padStart(2, '0')}-${String(draft.birthDay).padStart(2, '0')}`
+              : profileData.birth_date,
+          birth_time:
+            draft.birthHour !== '' && draft.birthMinute !== ''
+              ? `${String(draft.birthHour).padStart(2, '0')}:${String(draft.birthMinute).padStart(2, '0')}`
+              : profileData.birth_time,
+          gender: draft.gender || profileData.gender,
+          calendar_type: draft.calendarType || profileData.calendar_type,
+          saju_chart: draft.sajuChart?.formatted ?? '',
+          result: draft.result ?? '',
+        }
+
+        if (!readingPayload.result && !readingPayload.saju_chart) {
+          clearGuestDraft()
+          return
+        }
+
+        const readingSelect =
+          'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id'
+        const { data: reading, error: saveError } = await supabase
+          .from('saju_readings')
+          .insert(readingPayload)
+          .select(readingSelect)
+          .single()
+
+        if (!saveError && reading) {
+          setSelectedId(reading.id)
+          setReadings((prev) => [reading, ...prev.filter((item) => item.id !== reading.id)])
+        }
+      } catch (saveDraftError) {
+        console.error(saveDraftError)
+      } finally {
+        clearGuestDraft()
+      }
+    })()
   }, [session])
+
+  const clearResultState = () => {
+    setSajuChart(null)
+    setResult('')
+    setError('')
+    setSelectedId(null)
+    setIsViewingSaved(false)
+    setIsEditingSaved(false)
+    clearGuestDraft()
+  }
+
+  const clearFormFields = () => {
+    setName('')
+    setBirthYear('')
+    setBirthMonth('')
+    setBirthDay('')
+    setBirthHour('')
+    setBirthMinute('')
+    setGender('')
+    setCalendarType('')
+  }
+
+  const resetForm = () => {
+    clearResultState()
+    if (profile) {
+      applyProfileFields(profile, fieldSetters)
+      return
+    }
+    clearFormFields()
+  }
+
+  const handleNewSaju = () => {
+    clearResultState()
+    clearFormFields()
+    setIsSidebarOpen(false)
+  }
+
+  const hasSeenSajuResult = readings.length > 0 || Boolean(result) || Boolean(sajuChart)
 
   const handleGoogleSignIn = async () => {
     setAuthError('')
     setIsSigningIn(true)
+
+    if (result || sajuChart) {
+      persistGuestDraft()
+    }
 
     try {
       await signInWithGoogle()
@@ -263,10 +620,70 @@ function App() {
 
     try {
       await signOut()
+      setProfile(null)
       resetForm()
     } catch (signOutError) {
       setAuthError(signOutError.message)
     }
+  }
+
+  const handleSaveProfile = async (profileInput) => {
+    const saved = await upsertProfile(session.user.id, profileInput)
+    setProfile(saved)
+    setIsProfileRequired(false)
+    setShowProfileModal(false)
+
+    const draft = loadGuestDraft()
+    if (draft?.result || draft?.sajuChart) {
+      applyGuestDraft(draft)
+      clearGuestDraft()
+
+      try {
+        const readingPayload = {
+          user_id: session.user.id,
+          name: (draft.name || saved.name || '').trim(),
+          birth_date:
+            draft.birthYear && draft.birthMonth && draft.birthDay
+              ? `${draft.birthYear}-${String(draft.birthMonth).padStart(2, '0')}-${String(draft.birthDay).padStart(2, '0')}`
+              : saved.birth_date,
+          birth_time:
+            draft.birthHour !== '' && draft.birthMinute !== ''
+              ? `${String(draft.birthHour).padStart(2, '0')}:${String(draft.birthMinute).padStart(2, '0')}`
+              : saved.birth_time,
+          gender: draft.gender || saved.gender,
+          calendar_type: draft.calendarType || saved.calendar_type,
+          saju_chart: draft.sajuChart?.formatted ?? '',
+          result: draft.result ?? '',
+        }
+
+        if (readingPayload.result || readingPayload.saju_chart) {
+          const readingSelect =
+            'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id'
+          const { data: reading, error: saveError } = await supabase
+            .from('saju_readings')
+            .insert(readingPayload)
+            .select(readingSelect)
+            .single()
+
+          if (!saveError && reading) {
+            setSelectedId(reading.id)
+            setReadings((prev) => [reading, ...prev.filter((item) => item.id !== reading.id)])
+          }
+        }
+      } catch (saveDraftError) {
+        console.error(saveDraftError)
+      }
+
+      return
+    }
+
+    applyProfileFields(saved, fieldSetters)
+    clearResultState()
+  }
+
+  const openProfileEditor = () => {
+    setIsProfileRequired(false)
+    setShowProfileModal(true)
   }
 
   const handleDayChange = (value) => {
@@ -309,23 +726,6 @@ function App() {
     applyReading(reading)
   }
 
-  const resetForm = () => {
-    setName('')
-    setBirthYear('')
-    setBirthMonth('')
-    setBirthDay('')
-    setBirthHour('')
-    setBirthMinute('')
-    setGender('')
-    setCalendarType('')
-    setSajuChart(null)
-    setResult('')
-    setError('')
-    setSelectedId(null)
-    setIsViewingSaved(false)
-    setIsEditingSaved(false)
-  }
-
   const startEditSaved = () => {
     setIsViewingSaved(false)
     setIsEditingSaved(true)
@@ -354,6 +754,13 @@ function App() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
+
+    if (session && !profile) {
+      setIsProfileRequired(true)
+      setShowProfileModal(true)
+      setError('먼저 프로필 정보를 저장해 주세요.')
+      return
+    }
 
     if (!isFormComplete) {
       setError('모든 항목을 입력해 주세요.')
@@ -390,6 +797,14 @@ function App() {
       const cleanedResult = removeTautologicalParentheses(interpretation)
       setResult(cleanedResult)
 
+      if (!session) {
+        persistGuestDraft({
+          sajuChart: chart,
+          result: cleanedResult,
+        })
+        return
+      }
+
       const readingPayload = {
         user_id: session.user.id,
         name: name.trim(),
@@ -402,7 +817,7 @@ function App() {
       }
 
       const readingSelect =
-        'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at'
+        'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id'
 
       const { data: saved, error: saveError } = editingId
         ? await supabase
@@ -421,6 +836,7 @@ function App() {
         )
       }
 
+      clearGuestDraft()
       setSelectedId(saved.id)
       setReadings((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)])
     } catch (requestError) {
@@ -430,59 +846,44 @@ function App() {
     }
   }
 
-  if (authLoading) {
+  if (authLoading || (session && profileLoading && !profile && !showProfileModal)) {
     return (
       <div className="auth-screen">
-        <p className="auth-loading">로그인 상태를 확인하고 있습니다</p>
+        <p className="auth-loading">잠시만 기다려 주세요</p>
       </div>
     )
   }
 
-  if (!session) {
-    return (
-      <div className="auth-screen">
-        <div className="auth-card">
-          <p className="auth-eyebrow">사주 해석</p>
-          <h1 className="auth-title">로그인이 필요합니다</h1>
-          <p className="auth-description">
-            Google 계정으로 로그인하면 사주 결과를 저장하고 다시 볼 수 있습니다.
-          </p>
-          <button
-            type="button"
-            className="google-sign-in-btn"
-            onClick={handleGoogleSignIn}
-            disabled={isSigningIn}
-          >
-            <span className="google-sign-in-icon" aria-hidden="true">
-              G
-            </span>
-            {isSigningIn ? 'Google로 이동 중...' : 'Google로 로그인'}
-          </button>
-          {authError && <p className="error-message auth-error">{authError}</p>}
-        </div>
-      </div>
-    )
-  }
-
-  const userLabel =
-    session.user.user_metadata?.full_name ??
-    session.user.user_metadata?.name ??
-    session.user.email ??
-    '사용자'
+  const userLabel = profile?.name || googleDefaultName || session?.user?.email || '사용자'
 
   return (
     <div className="app-shell">
-      <button
-        type="button"
-        className="sidebar-toggle"
-        onClick={() => setIsSidebarOpen((open) => !open)}
-        aria-expanded={isSidebarOpen}
-        aria-controls="readings-sidebar"
-      >
-        {isSidebarOpen ? '목록 닫기' : '저장된 사주'}
-      </button>
+      {isLoggedIn && (
+        <ProfileModal
+          open={showProfileModal}
+          required={isProfileRequired}
+          initialProfile={profile}
+          defaultName={googleDefaultName}
+          onSave={handleSaveProfile}
+          onClose={() => {
+            if (!isProfileRequired) setShowProfileModal(false)
+          }}
+        />
+      )}
 
-      {isSidebarOpen && (
+      {isLoggedIn && (
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => setIsSidebarOpen((open) => !open)}
+          aria-expanded={isSidebarOpen}
+          aria-controls="readings-sidebar"
+        >
+          {isSidebarOpen ? '목록 닫기' : '저장된 사주'}
+        </button>
+      )}
+
+      {isLoggedIn && isSidebarOpen && (
         <button
           type="button"
           className="sidebar-backdrop"
@@ -491,67 +892,139 @@ function App() {
         />
       )}
 
-      <aside
-        id="readings-sidebar"
-        className={`readings-sidebar${isSidebarOpen ? ' open' : ''}`}
-        aria-label="저장된 사주 목록"
-      >
-        <div className="sidebar-header">
-          <h2>저장된 사주</h2>
-          <p>이름을 누르면 결과가 열립니다</p>
-        </div>
-        <ul className="readings-list">
-          {readings.length === 0 ? (
-            <li className="readings-empty">아직 저장된 사주가 없습니다</li>
-          ) : (
-            readings.map((reading) => (
-              <li key={reading.id} className="reading-row">
-                <button
-                  type="button"
-                  className={`reading-item${selectedId === reading.id ? ' active' : ''}`}
-                  onClick={() => handleSelectReading(reading)}
-                >
-                  <span className="reading-name">{reading.name}</span>
-                </button>
-                <button
-                  type="button"
-                  className="reading-delete"
-                  aria-label={`${reading.name} 삭제`}
-                  onClick={(event) => handleDeleteReading(event, reading)}
-                >
-                  지우기
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-      </aside>
+      {isLoggedIn && (
+        <aside
+          id="readings-sidebar"
+          className={`readings-sidebar${isSidebarOpen ? ' open' : ''}`}
+          aria-label="저장된 사주 목록"
+        >
+          <div className="sidebar-header">
+            <h2>저장된 사주</h2>
+            <p>날짜를 누르면 결과가 열립니다</p>
+            {hasSeenSajuResult && (
+              <button type="button" className="sidebar-new-btn" onClick={handleNewSaju}>
+                새 사주 입력
+              </button>
+            )}
+          </div>
+          <ul className="readings-list">
+            {readings.length === 0 ? (
+              <li className="readings-empty">아직 저장된 사주가 없습니다</li>
+            ) : (
+              readings.map((reading) => (
+                <li key={reading.id} className="reading-row">
+                  <button
+                    type="button"
+                    className={`reading-item${selectedId === reading.id ? ' active' : ''}`}
+                    onClick={() => handleSelectReading(reading)}
+                  >
+                    <span className="reading-name">{reading.name}</span>
+                    <span className="reading-date">{formatReadingDate(reading.created_at)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="reading-delete"
+                    aria-label={`${reading.name} 삭제`}
+                    onClick={(event) => handleDeleteReading(event, reading)}
+                  >
+                    지우기
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+        </aside>
+      )}
 
       <div className="app">
         <div className="user-bar">
-          <span className="user-label">{userLabel}</span>
-          <button type="button" className="sign-out-btn" onClick={handleSignOut}>
-            로그아웃
-          </button>
+          <div className="user-bar-main">
+            {isLoggedIn ? (
+              <>
+                <span className="user-label">{userLabel}</span>
+                {profile && (
+                  <span className="user-birth-hint">
+                    {formatBirthLabel(profile.birth_date, profile.birth_time)}
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="user-label">게스트로 이용 중</span>
+                <span className="user-birth-hint">로그인하면 전체 해석과 저장이 가능합니다</span>
+              </>
+            )}
+          </div>
+          <div className="user-bar-actions">
+            {isLoggedIn ? (
+              <>
+                <button type="button" className="profile-btn" onClick={openProfileEditor}>
+                  프로필
+                </button>
+                <button type="button" className="sign-out-btn" onClick={handleSignOut}>
+                  로그아웃
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="profile-btn"
+                onClick={handleGoogleSignIn}
+                disabled={isSigningIn}
+              >
+                {isSigningIn ? '이동 중...' : '로그인'}
+              </button>
+            )}
+          </div>
         </div>
 
         <header className="app-header">
-          <h1>사주 해석</h1>
-          <p>
-            {isEditingSaved
-              ? '저장된 사주를 수정한 뒤 다시 해석해 주세요'
-              : '생년월일과 태어난 시간을 선택해 주세요'}
-          </p>
+          <div className="app-header-row">
+            <div>
+              <h1>사주 해석</h1>
+              <p>
+                {isEditingSaved
+                  ? '저장된 사주를 수정한 뒤 다시 해석해 주세요'
+                  : isLoggedIn
+                    ? profile
+                      ? '프로필 정보가 자동으로 채워져 있습니다'
+                      : '프로필을 먼저 저장해 주세요'
+                    : '생년월일을 입력하면 바로 사주를 해석해 드려요'}
+              </p>
+            </div>
+            {hasSeenSajuResult && (
+              <button type="button" className="new-saju-btn" onClick={handleNewSaju}>
+                새 사주 입력
+              </button>
+            )}
+          </div>
         </header>
+
+        {isLoggedIn && profile && !isViewingSaved && (
+          <section className="profile-summary" aria-label="내 프로필">
+            <div className="profile-summary-text">
+              <p className="profile-summary-eyebrow">내 사주 정보</p>
+              <h2 className="profile-summary-name">{profile.name}</h2>
+              <p className="profile-summary-birth">
+                {formatBirthLabel(profile.birth_date, profile.birth_time)}
+              </p>
+              <div className="saved-result-meta">
+                <span className="meta-chip">{GENDER_LABEL[profile.gender]}</span>
+                <span className="meta-chip">{CALENDAR_LABEL[profile.calendar_type]}</span>
+              </div>
+            </div>
+            <button type="button" className="profile-edit-link" onClick={openProfileEditor}>
+              수정
+            </button>
+          </section>
+        )}
 
         {isViewingSaved && (sajuChart || result) && (
           <section className="saved-result-panel" ref={resultRef} aria-live="polite">
             <div className="saved-result-hero">
               <p className="saved-result-eyebrow">저장된 사주</p>
               <h2 className="saved-result-name">{name || '이름 없음'}</h2>
-              <p className="saved-result-birth">
-                {formatBirthLabel(birthDate, birthTime)}
-              </p>
+              <p className="saved-result-birth">{formatBirthLabel(birthDate, birthTime)}</p>
               <div className="saved-result-meta">
                 {gender && <span className="meta-chip">{GENDER_LABEL[gender]}</span>}
                 {calendarType && (
@@ -592,10 +1065,17 @@ function App() {
               </div>
             )}
 
-            {resultBlocks.length > 0 && (
+            {previewResult.visible.length > 0 && (
               <div className="interpretation-block">
                 <h3>사주 해석</h3>
-                <ResultBody blocks={resultBlocks} />
+                <CatSpeechPanel
+                  blocks={previewResult.visible}
+                  personName={name}
+                  locked={previewResult.locked}
+                  onLogin={handleGoogleSignIn}
+                  isSigningIn={isSigningIn}
+                  authError={authError}
+                />
               </div>
             )}
 
@@ -603,9 +1083,11 @@ function App() {
               <button type="button" className="edit-saved-btn" onClick={startEditSaved}>
                 수정하기
               </button>
-              <button type="button" className="clear-saved-btn" onClick={resetForm}>
-                새 사주 입력하기
-              </button>
+              {hasSeenSajuResult && (
+                <button type="button" className="clear-saved-btn" onClick={handleNewSaju}>
+                  새 사주 입력
+                </button>
+              )}
             </div>
           </section>
         )}
@@ -769,15 +1251,25 @@ function App() {
         {(error || authError) && <p className="error-message">{error || authError}</p>}
 
         {isLoading && (
-          <div className="loading-indicator" aria-live="polite">
-            <span className="loading-dot" />
-            <span className="loading-dot" />
-            <span className="loading-dot" />
-            <span>사주를 해석하고 있습니다</span>
+          <div className="cat-loading" aria-live="polite">
+            <img
+              src={sajuCatLoading}
+              alt="사주를 해석 중인 고양이"
+              className="cat-loading-image"
+            />
+            <div className="cat-loading-bubble">
+              <p className="cat-loading-title">사주를 보고 있다냥!</p>
+              <p className="cat-loading-text">조금만 기다리라냥.</p>
+              <div className="cat-loading-dots" aria-hidden="true">
+                <span className="loading-dot" />
+                <span className="loading-dot" />
+                <span className="loading-dot" />
+              </div>
+            </div>
           </div>
         )}
 
-        {!isViewingSaved && sajuChart && (
+        {!isViewingSaved && !isLoading && sajuChart && (
           <section className="result-section chart-section" ref={resultRef}>
             <h2>사주 명식</h2>
             {pillars.length > 0 && (
@@ -805,10 +1297,17 @@ function App() {
           </section>
         )}
 
-        {!isViewingSaved && result && (
-          <section className="result-section">
+        {!isViewingSaved && !isLoading && result && (
+          <section className="result-section cat-result-section">
             <h2>사주 해석</h2>
-            <ResultBody blocks={resultBlocks} />
+            <CatSpeechPanel
+              blocks={previewResult.visible}
+              personName={name}
+              locked={previewResult.locked}
+              onLogin={handleGoogleSignIn}
+              isSigningIn={isSigningIn}
+              authError={authError}
+            />
           </section>
         )}
       </div>

@@ -2,12 +2,137 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>saju-me</title>
+
+    <!-- Primary SEO -->
+    <title>사주미 | AI 사주 해석 — 생년월일로 보는 사주 풀이</title>
+    <meta
+      name="description"
+      content="생년월일만 입력하면 AI가 사주 명식과 해석을 알려드려요. 고양이 사주 선생님과 함께하는 쉽고 친근한 무료 사주 풀이 서비스, 사주미."
+    />
+    <meta
+      name="keywords"
+      content="사주, 사주풀이, AI사주, 무료사주, 사주해석, 사주명식, 운세, 사주보기, 사주미, 사주 고양이"
+    />
+    <meta name="author" content="사주미" />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <meta name="googlebot" content="index, follow" />
+    <meta name="theme-color" content="#1f316f" />
+    <meta name="color-scheme" content="light" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="application-name" content="사주미" />
+    <meta name="apple-mobile-web-app-title" content="사주미" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- Google Search Console -->
+    <meta
+      name="google-site-verification"
+      content="y2uDzqH0YDyZ7vKuy-Eu3be4ZB20IVhP6mxW85inU88"
+    />
+
+    <link rel="canonical" href="%VITE_SITE_URL%/" />
+    <link rel="alternate" hreflang="ko" href="%VITE_SITE_URL%/" />
+    <link rel="alternate" hreflang="x-default" href="%VITE_SITE_URL%/" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ko_KR" />
+    <meta property="og:site_name" content="사주미" />
+    <meta property="og:title" content="사주미 | AI 사주 해석" />
+    <meta
+      property="og:description"
+      content="생년월일만 입력하면 AI가 사주 명식과 해석을 알려드려요. 고양이 사주 선생님과 함께하는 쉽고 친근한 사주 풀이."
+    />
+    <meta property="og:url" content="%VITE_SITE_URL%/" />
+    <meta property="og:image" content="%VITE_SITE_URL%/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="사주미 AI 사주 해석 고양이 선생님" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="사주미 | AI 사주 해석" />
+    <meta
+      name="twitter:description"
+      content="생년월일만 입력하면 AI가 사주 명식과 해석을 알려드려요. 고양이 사주 선생님과 함께하는 사주 풀이."
+    />
+    <meta name="twitter:image" content="%VITE_SITE_URL%/og-image.png" />
+    <meta name="twitter:image:alt" content="사주미 AI 사주 해석 고양이 선생님" />
+
+    <!-- Icons & PWA -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Performance: fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Hahmlet:wght@300..900&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "%VITE_SITE_URL%/#website",
+            "url": "%VITE_SITE_URL%/",
+            "name": "사주미",
+            "alternateName": ["saju-me", "사주 ME"],
+            "description": "생년월일로 AI 사주 명식과 해석을 제공하는 사주 풀이 서비스",
+            "inLanguage": "ko-KR",
+            "publisher": { "@id": "%VITE_SITE_URL%/#organization" }
+          },
+          {
+            "@type": "Organization",
+            "@id": "%VITE_SITE_URL%/#organization",
+            "name": "사주미",
+            "url": "%VITE_SITE_URL%/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "%VITE_SITE_URL%/favicon.png"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "%VITE_SITE_URL%/#app",
+            "name": "사주미",
+            "url": "%VITE_SITE_URL%/",
+            "applicationCategory": "LifestyleApplication",
+            "operatingSystem": "Web",
+            "inLanguage": "ko-KR",
+            "description": "생년월일·출생시간을 입력하면 AI가 사주 명식과 해석을 제공합니다.",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "KRW"
+            },
+            "image": "%VITE_SITE_URL%/og-image.png"
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <main style="max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font-family: sans-serif">
+        <h1>사주미 | AI 사주 해석</h1>
+        <p>
+          생년월일만 입력하면 AI가 사주 명식과 해석을 알려드리는 서비스입니다.
+          전체 기능을 이용하려면 브라우저에서 JavaScript를 활성화해 주세요.
+        </p>
+      </main>
+    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
