@@ -5,15 +5,17 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 function seoEmitPlugin(siteUrl) {
-  const normalized = (siteUrl || '').replace(/\/$/, '')
+  const normalized = (siteUrl || 'https://saju-me-kang.vercel.app').replace(/\/$/, '')
 
   return {
     name: 'seo-emit',
     transformIndexHtml: {
       order: 'post',
       handler(html) {
+        let next = html.replaceAll('%VITE_SITE_URL%', normalized)
+
         // Search Console 인증값이 없거나 플레이스홀더면 메타 태그 제거
-        return html
+        next = next
           .replace(
             /<meta\s+name="google-site-verification"\s+content="%VITE_GOOGLE_SITE_VERIFICATION%"\s*\/?>\s*/i,
             '',
@@ -22,11 +24,15 @@ function seoEmitPlugin(siteUrl) {
             /<meta\s+name="google-site-verification"\s+content="\s*"\s*\/?>\s*/i,
             '',
           )
+          .replace(
+            /<meta\s+name="google-site-verification"\s+content="Search_Console에서_받은_코드"\s*\/?>\s*/i,
+            '',
+          )
+
+        return next
       },
     },
     closeBundle() {
-      if (!normalized) return
-
       const outDir = path.resolve('dist')
       if (!fs.existsSync(outDir)) return
 
