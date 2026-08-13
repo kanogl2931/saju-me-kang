@@ -1,5 +1,3 @@
 User-agent: *
 Allow: /
-
-# VITE_SITE_URL을 설정한 뒤 npm run build 하면
-# dist/robots.txt 에 실제 Sitemap URL이 자동으로 들어갑니다.
+Sitemap: https://saju-me-kang.vercel.app/sitemap.xml

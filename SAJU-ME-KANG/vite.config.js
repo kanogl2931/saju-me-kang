@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 
 function seoEmitPlugin(siteUrl) {
   const normalized = (siteUrl || '').replace(/\/$/, '')
@@ -36,10 +37,8 @@ function seoEmitPlugin(siteUrl) {
         [
           'User-agent: *',
           'Allow: /',
-          '',
           `Sitemap: ${normalized}/sitemap.xml`,
-          '',
-        ].join('\n'),
+        ].join('\n') + '\n',
         'utf8',
       )
 
@@ -68,6 +67,53 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
   return {
-    plugins: [react(), seoEmitPlugin(env.VITE_SITE_URL || '')],
+    plugins: [
+      react(),
+      seoEmitPlugin(env.VITE_SITE_URL || ''),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: ['favicon.png', 'favicon.svg', 'og-image.png', 'robots.txt'],
+        manifest: {
+          name: '사주미 | AI 사주 해석',
+          short_name: '사주미',
+          description: '생년월일만 입력하면 AI가 사주 명식과 해석을 알려드려요.',
+          start_url: '/',
+          scope: '/',
+          display: 'standalone',
+          orientation: 'portrait-primary',
+          background_color: '#f3eee4',
+          theme_color: '#1f316f',
+          lang: 'ko-KR',
+          icons: [
+            {
+              src: '/favicon.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/favicon.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/favicon.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable',
+            },
+          ],
+        },
+        manifestFilename: 'site.webmanifest',
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest,woff2}'],
+          navigateFallback: '/index.html',
+        },
+        devOptions: {
+          enabled: false,
+        },
+      }),
+    ],
   }
 })

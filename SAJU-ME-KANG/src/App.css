@@ -661,11 +661,18 @@
 
 .saved-result-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 0.6rem;
   margin-top: 1.25rem;
 }
 
+@media (min-width: 560px) {
+  .saved-result-actions {
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  }
+}
+
+.share-result-btn,
 .edit-saved-btn {
   width: 100%;
   padding: 0.75rem 1rem;
@@ -679,8 +686,29 @@
   transition: background 0.15s;
 }
 
+.share-result-btn:hover:not(:disabled),
 .edit-saved-btn:hover {
   background: var(--color-primary-hover);
+}
+
+.share-result-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.result-share-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.share-toast {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted, #6b635c);
+  text-align: center;
 }
 
 .clear-saved-btn:hover {

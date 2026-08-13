@@ -6,6 +6,13 @@ import ProfileModal from './components/ProfileModal'
 import { signInWithGoogle, signOut } from './services/auth'
 import { requestSajuInterpretation } from './services/gemini'
 import { fetchProfile, upsertProfile } from './services/profile'
+import {
+  READING_SELECT,
+  buildShareUrl,
+  createSharedReading,
+  ensureReadingShareToken,
+  fetchSharedReading,
+} from './services/share'
 import { supabase } from './services/supabase'
 import { buildSajuPrompt } from './utils/buildSajuPrompt'
 import { calculateSaju } from './utils/calculateSaju'
@@ -67,6 +74,7 @@ function stripMarkdownMarkers(text) {
 }
 
 const GUEST_DRAFT_KEY = 'saju-guest-draft'
+const PREVIEW_CUTOFF_HEADING = /사주에서\s*가장\s*특이.*눈에\s*띄는\s*점|특이.*눈에\s*띄는\s*점/
 
 function parseResultBlocks(text) {
   if (!text) return []
@@ -104,18 +112,42 @@ function blockTextLength(block) {
   return block.text?.length ?? 0
 }
 
-/** 로그인 전 미리보기: 전체 해석의 약 절반만 공개 */
-function splitBlocksForPreview(blocks, ratio = 0.5) {
+function restHasContent(blocks, fromIndex) {
+  return blocks.slice(fromIndex).some((block) => block.type !== 'divider')
+}
+
+/** 로그인 전 미리보기: [사주에서 가장 특이하고 눈에 띄는 점] 섹션까지만 공개 */
+function splitBlocksForPreview(blocks) {
   if (!blocks.length) {
     return { visible: [], locked: false }
   }
 
+  const cutoffHeadingIndex = blocks.findIndex(
+    (block) => block.type === 'heading' && PREVIEW_CUTOFF_HEADING.test(block.text),
+  )
+
+  if (cutoffHeadingIndex !== -1) {
+    let endIndex = blocks.length
+    for (let index = cutoffHeadingIndex + 1; index < blocks.length; index += 1) {
+      if (blocks[index].type === 'heading') {
+        endIndex = index
+        break
+      }
+    }
+
+    return {
+      visible: blocks.slice(0, endIndex),
+      locked: restHasContent(blocks, endIndex),
+    }
+  }
+
+  // 구형/비정형 결과: 앞쪽 절반만 공개
   const totalLength = blocks.reduce((sum, block) => sum + blockTextLength(block), 0)
   if (totalLength === 0) {
     return { visible: blocks, locked: false }
   }
 
-  const targetLength = Math.max(1, Math.floor(totalLength * ratio))
+  const targetLength = Math.max(1, Math.floor(totalLength * 0.45))
   let visibleCount = 0
   let accumulated = 0
 
@@ -125,15 +157,14 @@ function splitBlocksForPreview(blocks, ratio = 0.5) {
     if (accumulated >= targetLength) break
   }
 
-  // 마지막 블록까지 다 보여주면 잠글 내용이 없음 → 최소 1블록은 가림
   if (visibleCount >= blocks.length && blocks.length > 1) {
-    visibleCount = Math.max(1, Math.floor(blocks.length * ratio))
+    visibleCount = Math.max(1, Math.floor(blocks.length * 0.45))
   }
 
   if (visibleCount >= blocks.length) {
     const [first] = blocks
     if (first?.type === 'paragraph' && first.text.length > 80) {
-      const cut = Math.floor(first.text.length * ratio)
+      const cut = Math.floor(first.text.length * 0.45)
       return {
         visible: [{ ...first, text: `${first.text.slice(0, cut).trimEnd()}…` }],
         locked: true,
@@ -146,10 +177,6 @@ function splitBlocksForPreview(blocks, ratio = 0.5) {
     visible: blocks.slice(0, visibleCount),
     locked: restHasContent(blocks, visibleCount),
   }
-}
-
-function restHasContent(blocks, fromIndex) {
-  return blocks.slice(fromIndex).some((block) => block.type !== 'divider')
 }
 
 function saveGuestDraft(draft) {
@@ -233,7 +260,8 @@ function CatSpeechPanel({
               <div className="result-lock-card">
                 <p className="result-lock-title">나머지 해석은 로그인 후 확인할 수 있어요</p>
                 <p className="result-lock-desc">
-                  Google로 로그인하면 전체 사주 해석과 저장 기능을 이용할 수 있습니다.
+                  특이점까지는 미리 볼 수 있어요. Google로 로그인하면 약점·특징·질문까지 전체 해석과
+                  저장·공유를 이용할 수 있습니다.
                 </p>
                 <button
                   type="button"
@@ -316,6 +344,10 @@ function App() {
   const [profileLoading, setProfileLoading] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [isProfileRequired, setIsProfileRequired] = useState(false)
+  const [shareToken, setShareToken] = useState(null)
+  const [isSharing, setIsSharing] = useState(false)
+  const [shareMessage, setShareMessage] = useState('')
+  const [isSharedView, setIsSharedView] = useState(false)
 
   const resultRef = useRef(null)
   const guestDraftHandledRef = useRef(false)
@@ -380,7 +412,7 @@ function App() {
     if (isLoggedIn) {
       return { visible: resultBlocks, locked: false }
     }
-    return splitBlocksForPreview(resultBlocks, 0.5)
+    return splitBlocksForPreview(resultBlocks)
   }, [isLoggedIn, resultBlocks])
 
   const googleDefaultName =
@@ -401,9 +433,11 @@ function App() {
     setCalendarType(draft.calendarType ?? '')
     setSajuChart(draft.sajuChart ?? null)
     setResult(draft.result ?? '')
-    setSelectedId(null)
+    setShareToken(draft.shareToken ?? null)
+    setSelectedId(draft.selectedId ?? null)
     setIsViewingSaved(false)
     setIsEditingSaved(false)
+    setIsSharedView(false)
     setError('')
   }
 
@@ -419,6 +453,8 @@ function App() {
       calendarType,
       sajuChart,
       result,
+      shareToken,
+      selectedId,
       ...overrides,
     })
   }
@@ -426,9 +462,7 @@ function App() {
   const loadReadings = async () => {
     const { data, error: loadError } = await supabase
       .from('saju_readings')
-      .select(
-        'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id',
-      )
+      .select(READING_SELECT)
       .order('created_at', { ascending: false })
 
     if (loadError) {
@@ -541,8 +575,7 @@ function App() {
           return
         }
 
-        const readingSelect =
-          'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id'
+        const readingSelect = READING_SELECT
         const { data: reading, error: saveError } = await supabase
           .from('saju_readings')
           .insert(readingPayload)
@@ -551,6 +584,7 @@ function App() {
 
         if (!saveError && reading) {
           setSelectedId(reading.id)
+          setShareToken(reading.share_token ?? null)
           setReadings((prev) => [reading, ...prev.filter((item) => item.id !== reading.id)])
         }
       } catch (saveDraftError) {
@@ -566,9 +600,18 @@ function App() {
     setResult('')
     setError('')
     setSelectedId(null)
+    setShareToken(null)
+    setShareMessage('')
     setIsViewingSaved(false)
     setIsEditingSaved(false)
+    setIsSharedView(false)
     clearGuestDraft()
+
+    const url = new URL(window.location.href)
+    if (url.searchParams.has('share')) {
+      url.searchParams.delete('share')
+      window.history.replaceState({}, '', url.pathname + url.search + url.hash)
+    }
   }
 
   const clearFormFields = () => {
@@ -657,8 +700,7 @@ function App() {
         }
 
         if (readingPayload.result || readingPayload.saju_chart) {
-          const readingSelect =
-            'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id'
+          const readingSelect = READING_SELECT
           const { data: reading, error: saveError } = await supabase
             .from('saju_readings')
             .insert(readingPayload)
@@ -667,6 +709,7 @@ function App() {
 
           if (!saveError && reading) {
             setSelectedId(reading.id)
+            setShareToken(reading.share_token ?? null)
             setReadings((prev) => [reading, ...prev.filter((item) => item.id !== reading.id)])
           }
         }
@@ -695,10 +738,12 @@ function App() {
     setBirthDay(value)
   }
 
-  const applyReading = (reading) => {
+  const applyReading = (reading, { shared = false } = {}) => {
     setSelectedId(reading.id)
+    setShareToken(reading.share_token ?? null)
     setIsViewingSaved(true)
     setIsEditingSaved(false)
+    setIsSharedView(shared)
     setName(reading.name ?? '')
 
     const [year = '', month = '', day = ''] = (reading.birth_date ?? '').split('-')
@@ -715,6 +760,7 @@ function App() {
     setSajuChart(reading.saju_chart ? { formatted: reading.saju_chart } : null)
     setResult(reading.result ?? '')
     setError('')
+    setShareMessage('')
     setIsSidebarOpen(false)
 
     requestAnimationFrame(() => {
@@ -725,6 +771,98 @@ function App() {
   const handleSelectReading = (reading) => {
     applyReading(reading)
   }
+
+  const copyShareLink = async (token) => {
+    const shareUrl = buildShareUrl(token)
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setShareMessage('공유 링크를 복사했어요')
+    } catch {
+      window.prompt('아래 링크를 복사하세요', shareUrl)
+      setShareMessage('공유 링크를 준비했어요')
+    }
+  }
+
+  const handleShareResult = async () => {
+    if (!result && !sajuChart) return
+
+    setIsSharing(true)
+    setShareMessage('')
+    setError('')
+
+    try {
+      let token = shareToken
+
+      if (!token && selectedId && session) {
+        const reading = await ensureReadingShareToken(selectedId)
+        token = reading.share_token
+        setShareToken(token)
+        setReadings((prev) =>
+          prev.map((item) => (item.id === reading.id ? { ...item, ...reading } : item)),
+        )
+      }
+
+      if (!token) {
+        if (!isFormComplete) {
+          throw new Error('공유하려면 이름·생년월일·시간·성별·양력/음력이 필요해요.')
+        }
+
+        const created = await createSharedReading({
+          name: name.trim(),
+          birth_date: birthDate,
+          birth_time: birthTime,
+          gender,
+          calendar_type: calendarType,
+          saju_chart: sajuChart?.formatted ?? '',
+          result,
+        })
+
+        token = created.share_token
+        setShareToken(token)
+        setSelectedId(created.id)
+        persistGuestDraft({
+          shareToken: token,
+          selectedId: created.id,
+          sajuChart,
+          result,
+        })
+      }
+
+      const url = new URL(window.location.href)
+      url.searchParams.set('share', token)
+      window.history.replaceState({}, '', `${url.pathname}?${url.searchParams.toString()}`)
+
+      await copyShareLink(token)
+    } catch (shareError) {
+      setError(`공유에 실패했습니다: ${shareError.message}`)
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('share')
+    if (!token) return
+
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const reading = await fetchSharedReading(token)
+        if (cancelled) return
+        applyReading(reading, { shared: true })
+      } catch (shareLoadError) {
+        if (!cancelled) {
+          setError(`공유 결과를 불러오지 못했습니다: ${shareLoadError.message}`)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const startEditSaved = () => {
     setIsViewingSaved(false)
@@ -771,6 +909,9 @@ function App() {
     setError('')
     setResult('')
     setSajuChart(null)
+    setShareToken(null)
+    setShareMessage('')
+    setIsSharedView(false)
     const editingId = isEditingSaved && selectedId ? selectedId : null
     setIsViewingSaved(false)
     setIsEditingSaved(false)
@@ -816,8 +957,7 @@ function App() {
         result: cleanedResult,
       }
 
-      const readingSelect =
-        'id, name, birth_date, birth_time, gender, calendar_type, saju_chart, result, created_at, user_id'
+      const readingSelect = READING_SELECT
 
       const { data: saved, error: saveError } = editingId
         ? await supabase
@@ -838,6 +978,7 @@ function App() {
 
       clearGuestDraft()
       setSelectedId(saved.id)
+      setShareToken(saved.share_token ?? null)
       setReadings((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)])
     } catch (requestError) {
       setError(requestError.message)
@@ -1022,7 +1163,9 @@ function App() {
         {isViewingSaved && (sajuChart || result) && (
           <section className="saved-result-panel" ref={resultRef} aria-live="polite">
             <div className="saved-result-hero">
-              <p className="saved-result-eyebrow">저장된 사주</p>
+              <p className="saved-result-eyebrow">
+                {isSharedView ? '공유된 사주' : '저장된 사주'}
+              </p>
               <h2 className="saved-result-name">{name || '이름 없음'}</h2>
               <p className="saved-result-birth">{formatBirthLabel(birthDate, birthTime)}</p>
               <div className="saved-result-meta">
@@ -1080,15 +1223,26 @@ function App() {
             )}
 
             <div className="saved-result-actions">
-              <button type="button" className="edit-saved-btn" onClick={startEditSaved}>
-                수정하기
+              <button
+                type="button"
+                className="share-result-btn"
+                onClick={handleShareResult}
+                disabled={isSharing || (!result && !sajuChart)}
+              >
+                {isSharing ? '링크 준비 중...' : '결과 링크 복사'}
               </button>
+              {!isSharedView && (
+                <button type="button" className="edit-saved-btn" onClick={startEditSaved}>
+                  수정하기
+                </button>
+              )}
               {hasSeenSajuResult && (
                 <button type="button" className="clear-saved-btn" onClick={handleNewSaju}>
                   새 사주 입력
                 </button>
               )}
             </div>
+            {shareMessage && <p className="share-toast">{shareMessage}</p>}
           </section>
         )}
 
@@ -1308,6 +1462,17 @@ function App() {
               isSigningIn={isSigningIn}
               authError={authError}
             />
+            <div className="result-share-actions">
+              <button
+                type="button"
+                className="share-result-btn"
+                onClick={handleShareResult}
+                disabled={isSharing}
+              >
+                {isSharing ? '링크 준비 중...' : '결과 링크 복사'}
+              </button>
+              {shareMessage && <p className="share-toast">{shareMessage}</p>}
+            </div>
           </section>
         )}
       </div>

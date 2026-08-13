@@ -4,7 +4,8 @@ export async function signInWithGoogle() {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: window.location.origin,
+      // 공유 링크·작성 중이던 결과 화면으로 돌아올 수 있게 현재 URL 유지
+      redirectTo: window.location.href,
     },
   })
 
