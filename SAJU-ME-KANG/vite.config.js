@@ -78,7 +78,7 @@ export default defineConfig(({ mode }) => {
       seoEmitPlugin(env.VITE_SITE_URL || ''),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.png', 'favicon.svg', 'og-image.png', 'robots.txt'],
+        includeAssets: ['favicon.png', 'favicon.svg', 'og-image.jpg', 'robots.txt'],
         manifest: {
           name: '사주미 | AI 사주 해석',
           short_name: '사주미',
