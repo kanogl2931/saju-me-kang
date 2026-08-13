@@ -235,6 +235,17 @@
   color: var(--color-text-muted);
 }
 
+.app-header .trust-stat {
+  margin: 0.55rem 0 0;
+  font-size: 0.82rem;
+  color: var(--color-navy);
+}
+
+.app-header .trust-stat strong {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
 .new-saju-btn {
   flex-shrink: 0;
   padding: 0.6rem 0.9rem;

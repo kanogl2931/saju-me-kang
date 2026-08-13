@@ -1,11 +1,20 @@
 import { supabase } from './supabase'
 
+function getOAuthRedirectTo() {
+  const redirectUrl = new URL(window.location.href)
+  // Supabase puts the session in the URL hash (#access_token=...).
+  // If redirectTo already has a hash (leftover tokens or bare "#"),
+  // the callback becomes /##access_token=... and login fails to restore.
+  redirectUrl.hash = ''
+  return redirectUrl.toString()
+}
+
 export async function signInWithGoogle() {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      // 공유 링크·작성 중이던 결과 화면으로 돌아올 수 있게 현재 URL 유지
-      redirectTo: window.location.href,
+      // Keep path + query (e.g. ?share=...) but never the hash
+      redirectTo: getOAuthRedirectTo(),
     },
   })
 
